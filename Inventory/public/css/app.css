@@ -31,7 +31,7 @@ a{color:var(--accent-d)}
 .hdr-btn:hover{background:rgba(255,255,255,.22)}
 #actorLbl{overflow:hidden;text-overflow:ellipsis}
 .hdr-actions{position:relative}
-.hdr-btn .avatar{width:11px;height:11px;fill:#eef2f1;flex:none;vertical-align:-1px;margin-right:5px}
+.hdr-btn .avatar{width:13px;height:13px;fill:#eef2f1;flex:none;vertical-align:-1.5px;margin-right:5px}
 .hdr-menu{position:absolute;right:0;top:calc(100% + 8px);min-width:200px;background:#fff;color:var(--slate);
   border-radius:10px;box-shadow:0 8px 24px rgba(0,0,0,.22);padding:6px;z-index:70}
 .hdr-menu[hidden]{display:none}
