@@ -435,6 +435,7 @@ async function pageDevice(params, id) {
         <div class="card"><div class="card-title">Details<span class="r"><button class="link" id="editBtn">Edit</button></span></div>
           <dl class="kv">
             <dt>EUI</dt><dd class="mono">${fmtEui(d.eui)}</dd>
+            ${d.old_uid ? `<dt>Earlier ID</dt><dd class="mono" title="Labels printed with this ID still scan">${esc(d.old_uid)}</dd>` : ''}
             ${d.join_eui ? `<dt>JoinEUI</dt><dd class="mono">${fmtEui(d.join_eui)}</dd>` : ''}
             <dt>Serial #</dt><dd>${esc(d.serial_number || '—')}</dd>
             <dt>Firmware</dt><dd>${esc(d.firmware || '—')}</dd>
@@ -488,7 +489,8 @@ function deviceFields(d = {}, ms = [], { withStatus = false, locs = [] } = {}) {
     <div class="field" data-eui><label>EUI <span class="muted">(DevEUI / Gateway EUI)</span></label>
       <div class="inline"><input type="text" class="mono" name="eui" value="${esc(d.eui || '')}" placeholder="16 hex digits" autocomplete="off" spellcheck="false">
       ${withStatus ? '<button type="button" class="sec" id="scanEui" title="Scan the device’s QR code">⌗</button>' : ''}</div>
-      <span class="hint">${withStatus ? 'Becomes the device UID. Leave blank for equipment without an EUI and a JSP- ID will be generated.' : ''}</span></div>
+      <span class="hint">${withStatus ? 'Becomes the device UID. Leave blank for equipment without an EUI and a JSP- ID will be generated.'
+        : d.uid_source === 'generated' ? `Adding the EUI makes it the device ID. The printed ${esc(d.uid)} label keeps working.` : ''}</span></div>
     <div class="field"><label>Model</label><select name="model_id">${modelOptions(ms, d.model_id)}</select></div>
     <div class="field"><label>Name <span class="muted">(optional)</span></label><input type="text" name="name" value="${esc(d.name || '')}" placeholder="e.g. Tank 3 level"></div>
     <div class="field"><label>Serial #</label><input type="text" name="serial_number" value="${esc(d.serial_number || '')}"></div>

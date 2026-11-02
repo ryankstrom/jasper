@@ -201,7 +201,7 @@ export function createApi(db) {
   r.get('/devices', (req, res) => {
     const where = [], p = {};
     if (req.query.q) {
-      where.push(`(d.uid LIKE :q OR d.eui LIKE :hex OR d.serial_number LIKE :q OR d.name LIKE :q
+      where.push(`(d.uid LIKE :q OR d.old_uid LIKE :q OR d.eui LIKE :hex OR d.serial_number LIKE :q OR d.name LIKE :q
         OR m.model LIKE :q OR m.manufacturer LIKE :q OR l.name LIKE :q OR d.po_number LIKE :q)`);
       const text = String(req.query.q).trim();
       p.q = `%${text}%`;
@@ -280,14 +280,19 @@ export function createApi(db) {
       const dupe = q('SELECT uid FROM devices WHERE eui = ? AND id <> ?').get(changes.eui.to, cur.id);
       if (dupe) throw new HttpError(409, `EUI already belongs to ${dupe.uid}`);
     }
-    // EUI-keyed devices follow a corrected EUI; generated/manual uids are printed on labels and stay put
-    const newUid = cur.uid_source === 'eui' && changes.eui?.to ? changes.eui.to : cur.uid;
+    // EUI-keyed devices follow a corrected EUI. A generated JSP- id gives way to an EUI added later, but stays
+    // on as old_uid so its printed label still scans. Manual uids were chosen on purpose and stay put.
+    let newUid = cur.uid, uidSource = cur.uid_source, oldUid = cur.old_uid ?? null;
+    if (changes.eui?.to && (cur.uid_source === 'eui' || cur.uid_source === 'generated')) {
+      if (cur.uid_source === 'generated') { oldUid = cur.uid; uidSource = 'eui'; }
+      newUid = changes.eui.to;
+    }
     if (newUid !== cur.uid) changes.uid = { from: cur.uid, to: newUid };
     tx(db, () => {
       const sets = Object.keys(d).filter(k => k in changes);
       q(`UPDATE devices SET ${sets.map(k => `${k} = :${k}`).join(', ')}${sets.length ? ',' : ''} uid = :uid,
-        updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id = :id`)
-        .run({ ...Object.fromEntries(sets.map(k => [k, d[k]])), uid: newUid, id: cur.id });
+        uid_source = :uid_source, old_uid = :old_uid, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id = :id`)
+        .run({ ...Object.fromEntries(sets.map(k => [k, d[k]])), uid: newUid, uid_source: uidSource, old_uid: oldUid, id: cur.id });
       logEvent({ device_id: cur.id, action: 'edit', changes: JSON.stringify(changes), actor: actorOf(req) });
     });
     res.json(getDevice(cur.id));
@@ -348,8 +353,10 @@ export function createApi(db) {
     let device = null;
     const find = (sql, v) => (v ? q(`${DEVICE_SELECT} WHERE ${sql}`).get(v) : null);
     device = find('d.uid = ? COLLATE NOCASE', parsed.uid)
+      || find('d.old_uid = ? COLLATE NOCASE', parsed.uid)
       || find('d.eui = ?', parsed.eui)
       || find('d.uid = ? COLLATE NOCASE', parsed.raw)
+      || find('d.old_uid = ? COLLATE NOCASE', parsed.raw)
       || find('d.serial_number = ? COLLATE NOCASE', parsed.serial);
     res.json({ parsed, device: device || null });
   });

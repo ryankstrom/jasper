@@ -97,6 +97,14 @@ const MIGRATIONS = [
    );
    CREATE INDEX events_device ON events(device_id, ts);
    CREATE INDEX events_ts     ON events(ts);`,
+  // Devices first added without their EUI got a generated JSP- id. Once the EUI is known the EUI becomes
+  // the id, and the JSP- id is kept as old_uid so its printed label still scans.
+  `ALTER TABLE devices ADD COLUMN old_uid TEXT;
+   CREATE UNIQUE INDEX devices_old_uid ON devices(old_uid) WHERE old_uid IS NOT NULL;
+   UPDATE devices SET old_uid = uid, uid = eui, uid_source = 'eui' WHERE uid_source = 'generated' AND eui IS NOT NULL;
+   INSERT INTO events (device_id, action, changes, actor)
+     SELECT id, 'edit', json_object('uid', json_object('from', old_uid, 'to', uid)), 'system'
+     FROM devices WHERE old_uid IS NOT NULL;`,
 ];
 
 export function openDb(path = DB_PATH) {
