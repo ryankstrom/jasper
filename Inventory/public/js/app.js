@@ -143,7 +143,7 @@ function combo(input, items, noun) {
     const hits = items.filter(i => i.name.toLowerCase().includes(v))
       .sort((a, b) => b.name.toLowerCase().startsWith(v) - a.name.toLowerCase().startsWith(v));
     const rows = hits.map(i => ({ value: i.name, html: `${esc(i.name)}<span class="n">${i.n}</span>` }));
-    if (v && !exact(v)) rows.push({ value: input.value.trim(), html: `＋ Add “${esc(input.value.trim())}” as a new ${noun}`, add: true });
+    if (v && !exact(v)) rows.unshift({ value: input.value.trim(), html: `＋ Add “${esc(input.value.trim())}” as a new ${noun}`, add: true });
     list.innerHTML = rows.map((r, k) => `<button type="button" tabindex="-1" class="${r.add ? 'add' : ''}${k === active ? ' on' : ''}" data-v="${esc(r.value)}">${r.html}</button>`).join('');
     list.hidden = !rows.length || document.activeElement !== input;
   };
@@ -189,8 +189,9 @@ function searchSelect(select, placeholder, newLabel) {
     const words = q.toLowerCase().split(/\s+/).filter(Boolean);
     const rows = choices().filter(o => words.every(w => `${o.text} ${o.parentElement.label || ''}`.toLowerCase().includes(w)))
       .map(o => ({ v: o.value, html: `${esc(o.text)}${o.parentElement.label ? `<span class="n">${esc(o.parentElement.label)}</span>` : ''}` }));
+    // the add row leads, so it's reachable without scrolling a long catalog
     if (select.querySelector('option[value="__new"]'))
-      rows.push({ v: '__new', add: true, html: q ? `＋ ${esc(newLabel)} “${esc(q)}”` : `＋ ${esc(newLabel)}…` });
+      rows.unshift({ v: '__new', add: true, html: q ? `＋ ${esc(newLabel)} “${esc(q)}”` : `＋ ${esc(newLabel)}…` });
     list.innerHTML = rows.map((r, k) => `<button type="button" tabindex="-1" class="${r.add ? 'add' : ''}${k === active ? ' on' : ''}" data-v="${esc(r.v)}">${r.html}</button>`).join('');
     list.hidden = !rows.length || document.activeElement !== input;
   };
