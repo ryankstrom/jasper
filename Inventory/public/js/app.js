@@ -171,14 +171,83 @@ function combo(input, items, noun) {
 }
 const names = () => api('/names');
 
+// Type-to-search front for a <select> (the catalog model list). The select stays in the form, hidden, and holds
+// the value; this mirrors its options, so code that rebuilds or sets the select keeps working.
+function searchSelect(select, placeholder, newLabel) {
+  const box = document.createElement('div');
+  box.className = 'combo';
+  const input = Object.assign(document.createElement('input'), { type: 'search', placeholder, autocomplete: 'off' });
+  const list = Object.assign(document.createElement('div'), { className: 'combo-list', hidden: true });
+  box.append(input, list);
+  select.after(box);
+  select.hidden = true;
+  let active = -1, typed = false;
+  const choices = () => [...select.options].filter(o => o.value && o.value !== '__new');
+  const sync = () => { const o = select.selectedOptions[0]; input.value = o?.value && o.value !== '__new' ? o.text : ''; };
+  const render = () => {
+    const q = typed ? input.value.trim() : '';
+    const words = q.toLowerCase().split(/\s+/).filter(Boolean);
+    const rows = choices().filter(o => words.every(w => `${o.text} ${o.parentElement.label || ''}`.toLowerCase().includes(w)))
+      .map(o => ({ v: o.value, html: `${esc(o.text)}${o.parentElement.label ? `<span class="n">${esc(o.parentElement.label)}</span>` : ''}` }));
+    if (select.querySelector('option[value="__new"]'))
+      rows.push({ v: '__new', add: true, html: q ? `＋ ${esc(newLabel)} “${esc(q)}”` : `＋ ${esc(newLabel)}…` });
+    list.innerHTML = rows.map((r, k) => `<button type="button" tabindex="-1" class="${r.add ? 'add' : ''}${k === active ? ' on' : ''}" data-v="${esc(r.v)}">${r.html}</button>`).join('');
+    list.hidden = !rows.length || document.activeElement !== input;
+  };
+  const pick = v => {
+    list.hidden = true;
+    if (v === '__new') {
+      select.dataset.prev = select.value;
+      if (typed) select.dataset.query = input.value.trim();
+    }
+    select.value = v;
+    select.dispatchEvent(new Event('change'));
+    sync(); // the quick-create handler puts the old value back without a change event
+    input.blur();
+  };
+  input.addEventListener('focus', () => { typed = false; active = -1; render(); input.select(); });
+  input.addEventListener('input', () => { typed = true; active = -1; render(); });
+  input.addEventListener('blur', () => {
+    list.hidden = true;
+    if (typed && !input.value.trim() && select.value) { select.value = ''; select.dispatchEvent(new Event('change')); }
+    typed = false;
+    sync();
+  });
+  input.addEventListener('keydown', e => {
+    const n = list.children.length;
+    if (list.hidden || !n) return;
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      e.preventDefault();
+      active = (active + (e.key === 'ArrowDown' ? 1 : n - 1)) % n;
+      render();
+      list.children[active].scrollIntoView({ block: 'nearest' });
+    } else if (e.key === 'Enter') {
+      // Enter takes the highlighted row, or the only match; it never submits the form from here
+      e.preventDefault();
+      const matches = [...list.children].filter(b => !b.classList.contains('add'));
+      const b = active >= 0 ? list.children[active] : matches.length === 1 ? matches[0] : null;
+      if (b) pick(b.dataset.v);
+    } else if (e.key === 'Escape') { e.stopPropagation(); input.blur(); }
+  });
+  list.addEventListener('mousedown', e => e.preventDefault());
+  list.addEventListener('click', e => { const b = e.target.closest('[data-v]'); if (b) pick(b.dataset.v); });
+  select.addEventListener('change', sync);
+  new MutationObserver(sync).observe(select, { childList: true, subtree: true });
+  sync();
+}
+
 // "＋ New …" entries in selects open a nested quick-create form, then select the result.
 function wireQuickCreate(select, kind, onCreated, category) {
   let prev = select.value === '__new' ? '' : select.value;
   select.addEventListener('focus', () => { if (select.value !== '__new') prev = select.value; });
   select.addEventListener('change', async () => {
     if (select.value !== '__new') { prev = select.value; return; }
-    select.value = prev;
-    const created = kind === 'location' ? await quickLocation() : await quickModel(category?.());
+    // a search front (searchSelect) records what was chosen before, since the hidden select never gets focus
+    select.value = select.dataset.prev ?? prev;
+    delete select.dataset.prev;
+    const typed = select.dataset.query;
+    delete select.dataset.query;
+    const created = kind === 'location' ? await quickLocation() : await quickModel(category?.(), typed);
     if (!created) return;
     await onCreated(created);
     select.value = created.id;
@@ -210,12 +279,12 @@ async function quickLocation() {
   try { const l = await api('/locations', { method: 'POST', body: v }); await locations(true); return l; }
   catch (e) { toast(e.message, true); return null; }
 }
-async function quickModel(category = defaultType()) {
+async function quickModel(category = defaultType(), model = '') {
   const { manufacturers } = await names();
   const v = await inlineDialog(`<h2>New catalog model</h2><form class="stack">
     <div class="field"><label>Category</label><select name="category">${options(META.categories.map(c => ({ value: c.key, text: c.label })), category)}</select></div>
     <div class="field"><label>Manufacturer</label><input type="text" name="manufacturer" required placeholder="Search or add a manufacturer"></div>
-    <div class="field"><label>Model</label><input type="text" name="model" required></div>
+    <div class="field"><label>Model</label><input type="text" name="model" required value="${esc(model)}"></div>
     <div class="modal-actions"><button type="button" class="sec" data-x>Cancel</button><button>Create</button></div></form>`,
     w => combo(w.querySelector('[name=manufacturer]'), manufacturers, 'manufacturer'));
   if (!v) return null;
@@ -565,6 +634,7 @@ async function editDeviceModal(d, onDone) {
     <div class="modal-actions"><button type="button" class="sec" data-x>Cancel</button><button>Save</button></div></form>`, m => {
     m.querySelector('[data-x]').onclick = closeModal;
     combo(m.querySelector('[name=vendor]'), vendors, 'vendor');
+    searchSelect(m.querySelector('[name=model_id]'), 'Search models…', 'New model');
     wireQuickCreate(m.querySelector('[name=model_id]'), 'model', async () => {
       m.querySelector('[name=model_id]').innerHTML = modelOptions(await models());
     });
@@ -612,6 +682,7 @@ async function pageNew(params) {
   };
   $$('#typePick .chip').forEach(c => c.onclick = () => setType(c.dataset.cat));
   setType(META.categories.some(c => c.key === params.get('type')) ? params.get('type') : defaultType());
+  searchSelect(f.model_id, 'Search models…', 'New model');
   wireQuickCreate(f.model_id, 'model', async created => setType(created.category, await models()), () => type);
   wireQuickCreate(f.location_id, 'location', async () => { f.location_id.innerHTML = locationOptions(await locations()); });
   $('#scanEui').onclick = () => scanOnce(parsed => {
@@ -1040,6 +1111,7 @@ async function pageScan(params, code) {
   };
   $$('.mode-tabs button').forEach(b => b.onclick = () => setMode(b.dataset.mode));
   const bf = $('#batchForm');
+  searchSelect(bf.model_id, 'Search models…', 'New model');
   wireQuickCreate(bf.model_id, 'model', async () => { bf.model_id.innerHTML = modelOptions(await models()); });
   wireQuickCreate(bf.location_id, 'location', async () => { bf.location_id.innerHTML = locationOptions(await locations()); });
   setMode(mode);
