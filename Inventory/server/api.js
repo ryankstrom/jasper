@@ -81,6 +81,10 @@ export function createApi(db) {
   const checkModel = id => {
     if (id != null && !q('SELECT 1 FROM models WHERE id = ?').get(id)) throw new HttpError(400, 'Unknown model');
   };
+  // a name that differs from an existing one only in case takes the existing spelling, so lists don't fork
+  const canon = (sql, v) => (v && q(sql).get(v)?.v) || v;
+  const canonMaker = v => canon('SELECT manufacturer v FROM models WHERE manufacturer = ? COLLATE NOCASE LIMIT 1', v);
+  const canonVendor = v => canon('SELECT vendor v FROM devices WHERE vendor = ? COLLATE NOCASE LIMIT 1', v);
   const logEvent = e => q(`INSERT INTO events (device_id, action, from_status, to_status, from_location_id,
       to_location_id, lat, lon, note, changes, actor)
       VALUES (:device_id, :action, :from_status, :to_status, :from_location_id, :to_location_id,
@@ -131,6 +135,7 @@ export function createApi(db) {
       description: str(b.description) };
     if (!m.manufacturer || !m.model) throw new HttpError(400, 'Manufacturer and model are required');
     if (!CATEGORY_KEYS.has(m.category)) throw new HttpError(400, 'Unknown category');
+    m.manufacturer = canonMaker(m.manufacturer);
     return m;
   };
   r.post('/models', (req, res) => {
@@ -151,6 +156,35 @@ export function createApi(db) {
       throw new HttpError(409, 'Model is used by devices; reassign them first');
     q('DELETE FROM models WHERE id = ?').run(int(req.params.id));
     res.status(204).end();
+  });
+
+  // ---- manufacturer and vendor names (pick lists, rename / merge) ----
+  r.get('/names', (req, res) => res.json({
+    manufacturers: q(`SELECT manufacturer name, COUNT(*) n FROM models GROUP BY 1 ORDER BY 1 COLLATE NOCASE`).all(),
+    vendors: q(`SELECT vendor name, COUNT(*) n FROM devices WHERE vendor IS NOT NULL GROUP BY 1 ORDER BY 1 COLLATE NOCASE`).all(),
+  }));
+  // renaming onto a name that already exists merges the two
+  // an existing name keeps its spelling (merge); a case-only fix of the name being renamed is taken as typed
+  const renameTarget = (canonFn, from, typed) => { const c = canonFn(typed); return c === from ? typed : c; };
+  r.post('/names/:kind/rename', (req, res) => {
+    const from = str(req.body.from), kind = req.params.kind;
+    if (!from || !str(req.body.to)) throw new HttpError(400, 'Both names are required');
+    if (kind === 'manufacturers') {
+      const to = renameTarget(canonMaker, from, str(req.body.to));
+      const clash = q(`SELECT a.model FROM models a JOIN models b ON a.model = b.model
+        WHERE a.manufacturer = ? AND b.manufacturer = ?`).get(from, to);
+      if (clash && from !== to) throw new HttpError(409, `Both have a model called “${clash.model}”. Merge or rename that model first.`);
+      const { changes } = q('UPDATE models SET manufacturer = ? WHERE manufacturer = ?').run(to, from);
+      return res.json({ name: to, changed: changes });
+    }
+    if (kind !== 'vendors') throw new HttpError(404, 'Unknown list');
+    const to = renameTarget(canonVendor, from, str(req.body.to));
+    const ids = q('SELECT id FROM devices WHERE vendor = ?').all(from).map(d => d.id);
+    tx(db, () => {
+      q(`UPDATE devices SET vendor = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE vendor = ?`).run(to, from);
+      for (const id of ids) logEvent({ device_id: id, action: 'edit', changes: JSON.stringify({ vendor: { from, to } }), actor: actorOf(req) });
+    });
+    res.json({ name: to, changed: ids.length });
   });
 
   // ---- locations ----
@@ -202,7 +236,7 @@ export function createApi(db) {
     const where = [], p = {};
     if (req.query.q) {
       where.push(`(d.uid LIKE :q OR d.old_uid LIKE :q OR d.eui LIKE :hex OR d.serial_number LIKE :q OR d.name LIKE :q
-        OR m.model LIKE :q OR m.manufacturer LIKE :q OR l.name LIKE :q OR d.po_number LIKE :q)`);
+        OR m.model LIKE :q OR m.manufacturer LIKE :q OR l.name LIKE :q OR d.po_number LIKE :q OR d.vendor LIKE :q)`);
       const text = String(req.query.q).trim();
       p.q = `%${text}%`;
       p.hex = `%${text.replace(/[\s:\-]/g, '')}%`; // EUIs are often written AA:BB:.. or AA-BB-..
@@ -238,6 +272,7 @@ export function createApi(db) {
 
   r.post('/devices', (req, res) => {
     const d = cleanDevice(req.body);
+    if (d.vendor) d.vendor = canonVendor(d.vendor);
     const status = str(req.body.status) || 'in_stock';
     if (!STATUS_KEYS.has(status)) throw new HttpError(400, 'Unknown status');
     checkLocation(d.location_id);
@@ -271,6 +306,7 @@ export function createApi(db) {
     const cur = mustDevice(req.params.id);
     // status and location move through /transition so history stays meaningful
     const d = cleanDevice(req.body);
+    if (d.vendor) d.vendor = canonVendor(d.vendor);
     delete d.location_id;
     checkModel(d.model_id);
     const changes = {};

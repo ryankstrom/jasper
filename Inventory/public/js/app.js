@@ -123,6 +123,53 @@ function modelOptions(ms, sel, cat) {
   return `<option value="">— Select model —</option>${groups}<option value="__new">＋ New model…</option>`;
 }
 
+// Pick-or-add text box for free-text names (manufacturers, vendors): typing filters the names already in use,
+// and a name that only differs in case snaps to the existing spelling so the list doesn't fork.
+function combo(input, items, noun) {
+  const box = document.createElement('div');
+  box.className = 'combo';
+  input.replaceWith(box);
+  box.append(input);
+  input.autocomplete = 'off';
+  const list = document.createElement('div');
+  list.className = 'combo-list';
+  list.hidden = true;
+  box.append(list);
+  let active = -1;
+  const exact = v => items.find(i => i.name.toLowerCase() === v.trim().toLowerCase());
+  const render = () => {
+    const v = input.value.trim().toLowerCase();
+    const hits = items.filter(i => i.name.toLowerCase().includes(v))
+      .sort((a, b) => b.name.toLowerCase().startsWith(v) - a.name.toLowerCase().startsWith(v));
+    const rows = hits.map(i => ({ value: i.name, html: `${esc(i.name)}<span class="n">${i.n}</span>` }));
+    if (v && !exact(v)) rows.push({ value: input.value.trim(), html: `＋ Add “${esc(input.value.trim())}” as a new ${noun}`, add: true });
+    list.innerHTML = rows.map((r, k) => `<button type="button" tabindex="-1" class="${r.add ? 'add' : ''}${k === active ? ' on' : ''}" data-v="${esc(r.value)}">${r.html}</button>`).join('');
+    list.hidden = !rows.length || document.activeElement !== input;
+  };
+  const pick = v => { input.value = v; list.hidden = true; active = -1; };
+  input.addEventListener('focus', () => { active = -1; render(); });
+  input.addEventListener('input', () => { active = -1; render(); });
+  input.addEventListener('blur', () => {
+    list.hidden = true;
+    const e = exact(input.value);
+    if (e) input.value = e.name;
+  });
+  input.addEventListener('keydown', e => {
+    const n = list.children.length;
+    if (list.hidden || !n) return;
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      e.preventDefault();
+      active = (active + (e.key === 'ArrowDown' ? 1 : n - 1)) % n;
+      render();
+      list.children[active].scrollIntoView({ block: 'nearest' });
+    } else if (e.key === 'Enter' && active >= 0) { e.preventDefault(); pick(list.children[active].dataset.v); }
+    else if (e.key === 'Escape') { e.stopPropagation(); list.hidden = true; }
+  });
+  list.addEventListener('mousedown', e => e.preventDefault()); // keep focus in the input
+  list.addEventListener('click', e => { const b = e.target.closest('[data-v]'); if (b) pick(b.dataset.v); });
+}
+const names = () => api('/names');
+
 // "＋ New …" entries in selects open a nested quick-create form, then select the result.
 function wireQuickCreate(select, kind, onCreated, category) {
   let prev = select.value === '__new' ? '' : select.value;
@@ -137,7 +184,7 @@ function wireQuickCreate(select, kind, onCreated, category) {
     select.dispatchEvent(new Event('change'));
   });
 }
-function inlineDialog(html) {
+function inlineDialog(html, setup) {
   // a small dialog layered over the current modal/page
   return new Promise(resolve => {
     const wrap = document.createElement('div');
@@ -149,6 +196,7 @@ function inlineDialog(html) {
     const done = v => { wrap.remove(); resolve(v); };
     wrap.querySelector('[data-x]').onclick = () => done(null);
     wrap.querySelector('form').onsubmit = e => { e.preventDefault(); done(formData(e.target)); };
+    setup?.(wrap);
     wrap.querySelector('input')?.focus();
   });
 }
@@ -162,11 +210,13 @@ async function quickLocation() {
   catch (e) { toast(e.message, true); return null; }
 }
 async function quickModel(category = 'sensor') {
+  const { manufacturers } = await names();
   const v = await inlineDialog(`<h2>New catalog model</h2><form class="stack">
     <div class="field"><label>Category</label><select name="category">${options(META.categories.map(c => ({ value: c.key, text: c.label })), category)}</select></div>
-    <div class="field"><label>Manufacturer</label><input type="text" name="manufacturer" required placeholder="e.g. Milesight"></div>
-    <div class="field"><label>Model</label><input type="text" name="model" required placeholder="e.g. EM300-TH"></div>
-    <div class="modal-actions"><button type="button" class="sec" data-x>Cancel</button><button>Create</button></div></form>`);
+    <div class="field"><label>Manufacturer</label><input type="text" name="manufacturer" required placeholder="Search or add a manufacturer"></div>
+    <div class="field"><label>Model</label><input type="text" name="model" required></div>
+    <div class="modal-actions"><button type="button" class="sec" data-x>Cancel</button><button>Create</button></div></form>`,
+    w => combo(w.querySelector('[name=manufacturer]'), manufacturers, 'manufacturer'));
   if (!v) return null;
   try { const m = await api('/models', { method: 'POST', body: v }); await models(true); return m; }
   catch (e) { toast(e.message, true); return null; }
@@ -500,7 +550,7 @@ function deviceFields(d = {}, ms = [], { withStatus = false, locs = [] } = {}) {
     <div class="field" data-eui><label>JoinEUI / AppEUI</label><input type="text" class="mono" name="join_eui" value="${esc(d.join_eui || '')}" autocomplete="off" spellcheck="false"></div>
     <div class="field"><label>Firmware</label><input type="text" name="firmware" value="${esc(d.firmware || '')}"></div>
     <div class="field"><label>Purchase date</label><input type="date" name="purchase_date" value="${esc(d.purchase_date || '')}"></div>
-    <div class="field"><label>Vendor</label><input type="text" name="vendor" value="${esc(d.vendor || '')}"></div>
+    <div class="field"><label>Vendor</label><input type="text" name="vendor" value="${esc(d.vendor || '')}" placeholder="Search or add a vendor"></div>
     <div class="field"><label>PO #</label><input type="text" name="po_number" value="${esc(d.po_number || '')}"></div>
     <div class="field"><label>Cost (USD)</label><input type="number" step="0.01" min="0" name="cost" value="${esc(d.cost ?? '')}"></div>
     <div class="field"><label>Warranty expires</label><input type="date" name="warranty_expires" value="${esc(d.warranty_expires || '')}"></div>
@@ -508,11 +558,12 @@ function deviceFields(d = {}, ms = [], { withStatus = false, locs = [] } = {}) {
 }
 
 async function editDeviceModal(d, onDone) {
-  const ms = await models();
+  const [ms, { vendors }] = await Promise.all([models(), names()]);
   modal(`<h2>Edit details</h2><form id="edForm"><div class="form">${deviceFields(d, ms)}</div>
     <p class="small muted" style="margin-top:10px">Status and location change through the status buttons so the history stays accurate.</p>
     <div class="modal-actions"><button type="button" class="sec" data-x>Cancel</button><button>Save</button></div></form>`, m => {
     m.querySelector('[data-x]').onclick = closeModal;
+    combo(m.querySelector('[name=vendor]'), vendors, 'vendor');
     wireQuickCreate(m.querySelector('[name=model_id]'), 'model', async () => {
       m.querySelector('[name=model_id]').innerHTML = modelOptions(await models());
     });
@@ -530,7 +581,7 @@ new MutationObserver(() => { if (!$('#modalBackdrop').classList.contains('show')
 
 // --- add device ---
 async function pageNew(params) {
-  const [ms, locs] = await Promise.all([models(true), locations(true)]);
+  const [ms, locs, { vendors }] = await Promise.all([models(true), locations(true), names()]);
   const prefill = { eui: params.get('eui'), join_eui: params.get('join'), serial_number: params.get('serial'),
     status: 'in_stock', location_id: locs.find(l => l.kind === 'warehouse' && !l.archived)?.id };
   view.innerHTML = `
@@ -544,6 +595,7 @@ async function pageNew(params) {
       <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:16px;flex-wrap:wrap">
         <a class="btn sec" href="#/devices">Cancel</a><button type="submit">Add to inventory</button></div></form>`;
   const f = $('#newForm');
+  combo(f.vendor, vendors, 'vendor');
   // the type picker narrows the model list and hides the EUI fields for equipment that has none
   let type;
   const setType = (cat, list = ms) => {
@@ -666,13 +718,18 @@ async function pageLocation(params, id) {
 }
 
 // --- catalog ---
-async function pageModels() {
+async function pageModels(params = new URLSearchParams()) {
+  const tab = ['makers', 'vendors'].includes(params.get('tab')) ? params.get('tab') : 'models';
+  const tabs = `<div class="chips">${[['models', 'Models'], ['makers', 'Manufacturers'], ['vendors', 'Vendors']]
+    .map(([k, t]) => `<a class="chip ${k === tab ? 'on' : ''}" href="#/models${k === 'models' ? '' : '?tab=' + k}">${t}</a>`).join('')}</div>`;
+  if (tab !== 'models') return pageNames(tab, tabs);
   const ms = await models(true);
   view.innerHTML = `
     <div class="page-head"><div class="grow"><h1>Equipment catalog</h1>
       <p class="sub">The makes and models you stock. Each device in inventory points at one of these.</p></div>
       <div class="actions"><button id="addModel">＋ Add model</button></div></div>
-    ${ms.length ? `<div class="filters"><input type="search" id="mq" placeholder="Search make, model or description…" autocomplete="off">
+    ${tabs}
+    ${ms.length ? `<div class="filters"><input type="search" id="mq" placeholder="Search make, model or description…" autocomplete="off" value="${esc(params.get('q') || '')}">
       <select id="mcat">${options(META.categories.map(c => ({ value: c.key, text: c.label })), '', 'All types')}</select></div>
       <div class="tbl-wrap"><table><thead><tr><th>Model</th><th>Type</th><th>Devices</th><th></th></tr></thead><tbody>
       ${ms.map(m => `<tr data-row="${m.id}"><td><div class="t1">${esc(m.manufacturer)} ${esc(m.model)}</div><div class="t2">${esc(m.description || '')}</div></td>
@@ -694,19 +751,59 @@ async function pageModels() {
     }
     $('#mnone').hidden = shown > 0;
   };
-  if (ms.length) { $('#mq').oninput = filter; $('#mcat').onchange = filter; }
+  if (ms.length) { $('#mq').oninput = filter; $('#mcat').onchange = filter; filter(); }
   $$('[data-edit]').forEach(b => b.onclick = () => modelModal(ms.find(m => m.id === +b.dataset.edit)));
+}
+
+// Manufacturer and vendor names: what's in use, and rename (renaming onto an existing name merges them)
+async function pageNames(tab, tabs) {
+  const kind = tab === 'makers' ? 'manufacturers' : 'vendors';
+  const noun = tab === 'makers' ? 'manufacturer' : 'vendor';
+  const list = (await names())[kind];
+  const count = r => tab === 'makers'
+    ? `<a href="#/models?q=${encodeURIComponent(r.name)}">${r.n} model${r.n === 1 ? '' : 's'}</a>`
+    : `<a href="#/devices?status=all&q=${encodeURIComponent(r.name)}">${r.n} device${r.n === 1 ? '' : 's'}</a>`;
+  view.innerHTML = `
+    <div class="page-head"><div class="grow"><h1>Equipment catalog</h1>
+      <p class="sub">${tab === 'makers' ? 'Manufacturers used by catalog models.' : 'Vendors recorded on devices.'}
+        Rename one onto another to merge duplicates.</p></div></div>
+    ${tabs}
+    ${list.length ? `<div class="tbl-wrap"><table><thead><tr><th>${tab === 'makers' ? 'Manufacturer' : 'Vendor'}</th><th>Used by</th><th></th></tr></thead><tbody>
+      ${list.map((r, k) => `<tr><td><div class="t1">${esc(r.name)}</div></td><td>${count(r)}</td>
+        <td style="text-align:right"><button class="link" data-rename="${k}">Rename</button></td></tr>`).join('')}
+      </tbody></table></div>`
+    : `<div class="card empty">No ${noun}s yet. They’re added as you fill in ${tab === 'makers' ? 'catalog models' : 'devices'}.</div>`}`;
+  $$('[data-rename]').forEach(b => b.onclick = () => {
+    const from = list[+b.dataset.rename].name;
+    modal(`<h2>Rename ${esc(noun)}</h2><form class="stack">
+      <div class="field"><label>New name</label><input type="text" name="to" required value="${esc(from)}">
+        <span class="hint">Pick an existing ${esc(noun)} to merge “${esc(from)}” into it.</span></div>
+      <div class="modal-actions"><button type="button" class="sec" data-x>Cancel</button><button>Rename</button></div></form>`, el => {
+      el.querySelector('[data-x]').onclick = closeModal;
+      combo(el.querySelector('[name=to]'), list.filter(r => r.name !== from), noun);
+      el.querySelector('form').onsubmit = async e => {
+        e.preventDefault();
+        try {
+          const r = await api(`/names/${kind}/rename`, { method: 'POST', body: { from, to: e.target.to.value } });
+          cache.models = null; closeModal();
+          toast(r.name === from ? 'No change' : `Renamed to ${r.name}`);
+          pageNames(tab, tabs);
+        } catch (err) { toast(err.message, true); }
+      };
+    });
+  });
 }
 function modelModal(m) {
   m ||= { category: 'sensor' };
   modal(`<h2>${m.id ? 'Edit model' : 'New model'}</h2><form class="stack">
     <div class="field"><label>Category</label><select name="category">${options(META.categories.map(c => ({ value: c.key, text: c.label })), m.category)}</select></div>
-    <div class="field"><label>Manufacturer</label><input type="text" name="manufacturer" required value="${esc(m.manufacturer || '')}"></div>
+    <div class="field"><label>Manufacturer</label><input type="text" name="manufacturer" required value="${esc(m.manufacturer || '')}" placeholder="Search or add a manufacturer"></div>
     <div class="field"><label>Model</label><input type="text" name="model" required value="${esc(m.model || '')}"></div>
     <div class="field"><label>Description</label><input type="text" name="description" value="${esc(m.description || '')}"></div>
     <div class="modal-actions">${m.id && !m.device_count ? '<button type="button" class="sec" data-del style="margin-right:auto;color:var(--danger)">Delete</button>' : ''}
       <button type="button" class="sec" data-x>Cancel</button><button>Save</button></div></form>`, el => {
     el.querySelector('[data-x]').onclick = closeModal;
+    names().then(n => combo(el.querySelector('[name=manufacturer]'), n.manufacturers, 'manufacturer'));
     el.querySelector('[data-del]')?.addEventListener('click', async () => {
       try { await api('/models/' + m.id, { method: 'DELETE' }); cache.models = null; closeModal(); pageModels(); }
       catch (err) { toast(err.message, true); }
