@@ -107,6 +107,8 @@ button.danger{background:var(--danger)}
 button.danger:hover{background:#93291f}
 button.link{background:none;color:var(--accent-d);padding:0;font-weight:500;font-size:inherit}
 button.link:hover{background:none;text-decoration:underline}
+button.link[disabled]{color:var(--line);cursor:default;text-decoration:none}
+[data-move]{margin-right:8px;font-size:15px}
 .full{width:100%}
 
 /* quick actions on device page */

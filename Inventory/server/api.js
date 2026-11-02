@@ -1,10 +1,9 @@
 import express from 'express';
 import QRCode from 'qrcode';
-import { STATUSES, CATEGORIES, LOCATION_KINDS, tx } from './db.js';
+import { STATUSES, LOCATION_KINDS, tx } from './db.js';
 import { generateUid, normalizeEui, parseScan } from './codes.js';
 
 const STATUS_KEYS = new Set(STATUSES.map(s => s.key));
-const CATEGORY_KEYS = new Set(CATEGORIES.map(c => c.key));
 const KIND_KEYS = new Set(LOCATION_KINDS.map(k => k.key));
 
 const DEVICE_FIELDS = ['eui', 'join_eui', 'serial_number', 'name', 'model_id', 'location_id', 'lat', 'lon',
@@ -100,7 +99,9 @@ export function createApi(db) {
     if (access && !email) console.warn('Access request without cf-access-authenticated-user-email header');
     res.json({ email, access });
   });
-  r.get('/meta', (req, res) => res.json({ statuses: STATUSES, categories: CATEGORIES, location_kinds: LOCATION_KINDS }));
+  const categories = () => q('SELECT key, label, eui FROM categories ORDER BY sort, label').all()
+    .map(c => ({ ...c, eui: !!c.eui }));
+  r.get('/meta', (req, res) => res.json({ statuses: STATUSES, categories: categories(), location_kinds: LOCATION_KINDS }));
 
   r.get('/stats', (req, res) => {
     const byStatus = q('SELECT status, COUNT(*) n FROM devices GROUP BY status').all();
@@ -131,10 +132,10 @@ export function createApi(db) {
       GROUP BY m.id ORDER BY m.category, m.manufacturer, m.model`).all());
   });
   const cleanModel = b => {
-    const m = { category: str(b.category) || 'sensor', manufacturer: str(b.manufacturer), model: str(b.model),
+    const m = { category: str(b.category) || categories()[0]?.key, manufacturer: str(b.manufacturer), model: str(b.model),
       description: str(b.description) };
     if (!m.manufacturer || !m.model) throw new HttpError(400, 'Manufacturer and model are required');
-    if (!CATEGORY_KEYS.has(m.category)) throw new HttpError(400, 'Unknown category');
+    if (!q('SELECT 1 FROM categories WHERE key = ?').get(m.category)) throw new HttpError(400, 'Unknown type');
     m.manufacturer = canonMaker(m.manufacturer);
     return m;
   };
@@ -155,6 +156,51 @@ export function createApi(db) {
     if (q('SELECT 1 FROM devices WHERE model_id = ?').get(int(req.params.id)))
       throw new HttpError(409, 'Model is used by devices; reassign them first');
     q('DELETE FROM models WHERE id = ?').run(int(req.params.id));
+    res.status(204).end();
+  });
+
+  // ---- equipment types ----
+  r.get('/categories', (req, res) => res.json(q(`SELECT c.key, c.label, c.eui, c.sort,
+      (SELECT COUNT(*) FROM models m WHERE m.category = c.key) models,
+      (SELECT COUNT(*) FROM devices d JOIN models m ON m.id = d.model_id WHERE m.category = c.key) devices
+    FROM categories c ORDER BY c.sort, c.label`).all().map(c => ({ ...c, eui: !!c.eui }))));
+  const cleanCategory = (b, key) => {
+    const c = { label: str(b.label), eui: b.eui === true || b.eui === 'on' || b.eui === '1' ? 1 : 0 };
+    if (!c.label) throw new HttpError(400, 'Name is required');
+    const same = q('SELECT key FROM categories WHERE label = ? COLLATE NOCASE').get(c.label);
+    if (same && same.key !== key) throw new HttpError(409, `There’s already a type called “${c.label}”`);
+    return c;
+  };
+  r.post('/categories', (req, res) => {
+    const c = cleanCategory(req.body);
+    // the key is a permanent slug of the first name; renaming later only changes the label
+    const base = c.label.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'type';
+    let key = base;
+    for (let n = 2; q('SELECT 1 FROM categories WHERE key = ?').get(key); n++) key = `${base}-${n}`;
+    const sort = (q('SELECT MAX(sort) s FROM categories').get().s ?? -1) + 1;
+    q('INSERT INTO categories (key, label, eui, sort) VALUES (?, ?, ?, ?)').run(key, c.label, c.eui, sort);
+    res.status(201).json({ key, ...c, eui: !!c.eui });
+  });
+  r.put('/categories/:key', (req, res) => {
+    const c = cleanCategory(req.body, req.params.key);
+    const { changes } = q('UPDATE categories SET label = ?, eui = ? WHERE key = ?').run(c.label, c.eui, req.params.key);
+    if (!changes) throw new HttpError(404, 'Type not found');
+    res.json({ key: req.params.key, ...c, eui: !!c.eui });
+  });
+  // move a type one place up or down in the list
+  r.post('/categories/:key/move', (req, res) => {
+    const list = q('SELECT key FROM categories ORDER BY sort, label').all().map(c => c.key);
+    const i = list.indexOf(req.params.key), j = i + (req.body.dir === 'up' ? -1 : 1);
+    if (i < 0) throw new HttpError(404, 'Type not found');
+    if (j >= 0 && j < list.length) [list[i], list[j]] = [list[j], list[i]];
+    tx(db, () => list.forEach((k, n) => q('UPDATE categories SET sort = ? WHERE key = ?').run(n, k)));
+    res.json({ ok: true });
+  });
+  r.delete('/categories/:key', (req, res) => {
+    if (q('SELECT 1 FROM models WHERE category = ?').get(req.params.key))
+      throw new HttpError(409, 'Models still use this type. Move them to another type first.');
+    if (q('SELECT COUNT(*) n FROM categories').get().n <= 1) throw new HttpError(409, 'Keep at least one type');
+    q('DELETE FROM categories WHERE key = ?').run(req.params.key);
     res.status(204).end();
   });
 

@@ -16,15 +16,17 @@ export const STATUSES = [
   { key: 'retired',    label: 'Retired' },
   { key: 'lost',       label: 'Lost' },
 ];
-export const CATEGORIES = [
-  // short: Add device type picker; eui: whether this kind of equipment carries a LoRaWAN EUI
-  { key: 'sensor',   label: 'LoRaWAN Sensor',     short: 'Sensor',  eui: true },
-  { key: 'gateway',  label: 'Gateway',            short: 'Gateway', eui: true },
-  { key: 'antenna',  label: 'Antenna',            short: 'Antenna' },
-  { key: 'power',    label: 'Power / Solar',      short: 'Power' },
-  { key: 'network',  label: 'Backhaul / Network', short: 'Network' },
-  { key: 'other',    label: 'Other Equipment',    short: 'Other' },
+// Equipment types live in the categories table (editable from the Catalog); these are the starting set.
+// eui: whether this kind of equipment carries a LoRaWAN EUI
+const DEFAULT_CATEGORIES = [
+  { key: 'sensor',   label: 'LoRaWAN Sensor',     eui: 1 },
+  { key: 'gateway',  label: 'Gateway',            eui: 1 },
+  { key: 'antenna',  label: 'Antenna',            eui: 0 },
+  { key: 'power',    label: 'Power / Solar',      eui: 0 },
+  { key: 'network',  label: 'Backhaul / Network', eui: 0 },
+  { key: 'other',    label: 'Other Equipment',    eui: 0 },
 ];
+const sqlStr = v => `'${String(v).replace(/'/g, "''")}'`;
 export const LOCATION_KINDS = [
   { key: 'warehouse', label: 'Warehouse / Stock' },
   { key: 'site',      label: 'Deployment Site' },
@@ -105,6 +107,14 @@ const MIGRATIONS = [
    INSERT INTO events (device_id, action, changes, actor)
      SELECT id, 'edit', json_object('uid', json_object('from', old_uid, 'to', uid)), 'system'
      FROM devices WHERE old_uid IS NOT NULL;`,
+  `CREATE TABLE categories (
+     key   TEXT PRIMARY KEY,
+     label TEXT NOT NULL UNIQUE COLLATE NOCASE,
+     eui   INTEGER NOT NULL DEFAULT 0,
+     sort  INTEGER NOT NULL DEFAULT 0
+   );
+   INSERT INTO categories (key, label, eui, sort) VALUES
+   ${DEFAULT_CATEGORIES.map((c, k) => `(${sqlStr(c.key)}, ${sqlStr(c.label)}, ${c.eui}, ${k})`).join(',\n   ')};`,
 ];
 
 export function openDb(path = DB_PATH) {

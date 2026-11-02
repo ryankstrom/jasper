@@ -10,6 +10,7 @@ const STATUS_COLOR = { in_stock: 'var(--accent)', deployed: 'var(--good)', in_tr
   repair: 'var(--warn)', retired: '#8d9a9b', lost: 'var(--danger)' };
 const STATUS_ICON = { in_stock: '⇩', deployed: '⇧', in_transit: '⇄', repair: '⚒', retired: '⊘', lost: '?' };
 let META = { statuses: [], categories: [], location_kinds: [] };
+const defaultType = () => META.categories[0]?.key;
 const label = (list, key) => META[list].find(x => x.key === key)?.label ?? key ?? '—';
 const statusLabel = k => label('statuses', k);
 const catLabel = k => label('categories', k);
@@ -209,7 +210,7 @@ async function quickLocation() {
   try { const l = await api('/locations', { method: 'POST', body: v }); await locations(true); return l; }
   catch (e) { toast(e.message, true); return null; }
 }
-async function quickModel(category = 'sensor') {
+async function quickModel(category = defaultType()) {
   const { manufacturers } = await names();
   const v = await inlineDialog(`<h2>New catalog model</h2><form class="stack">
     <div class="field"><label>Category</label><select name="category">${options(META.categories.map(c => ({ value: c.key, text: c.label })), category)}</select></div>
@@ -590,7 +591,7 @@ async function pageNew(params) {
       <p class="sub">Use the device EUI as its unique ID whenever it has one. Equipment without an EUI (antennas, solar kits…) gets a generated <span class="mono">JSP-</span> ID and a printable QR label.</p></div></div>
     <form id="newForm" class="card"><div class="form">
       <div class="field wide"><label>Type</label><div class="chips" id="typePick" style="margin:0">
-        ${META.categories.map(c => `<button type="button" class="chip" data-cat="${c.key}">${esc(c.short)}</button>`).join('')}</div></div>
+        ${META.categories.map(c => `<button type="button" class="chip" data-cat="${c.key}">${esc(c.label)}</button>`).join('')}</div></div>
       ${deviceFields(prefill, ms, { withStatus: true, locs })}</div>
       <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:16px;flex-wrap:wrap">
         <a class="btn sec" href="#/devices">Cancel</a><button type="submit">Add to inventory</button></div></form>`;
@@ -610,7 +611,7 @@ async function pageNew(params) {
     });
   };
   $$('#typePick .chip').forEach(c => c.onclick = () => setType(c.dataset.cat));
-  setType(META.categories.some(c => c.key === params.get('type')) ? params.get('type') : 'sensor');
+  setType(META.categories.some(c => c.key === params.get('type')) ? params.get('type') : defaultType());
   wireQuickCreate(f.model_id, 'model', async created => setType(created.category, await models()), () => type);
   wireQuickCreate(f.location_id, 'location', async () => { f.location_id.innerHTML = locationOptions(await locations()); });
   $('#scanEui').onclick = () => scanOnce(parsed => {
@@ -719,9 +720,10 @@ async function pageLocation(params, id) {
 
 // --- catalog ---
 async function pageModels(params = new URLSearchParams()) {
-  const tab = ['makers', 'vendors'].includes(params.get('tab')) ? params.get('tab') : 'models';
-  const tabs = `<div class="chips">${[['models', 'Models'], ['makers', 'Manufacturers'], ['vendors', 'Vendors']]
+  const tab = ['types', 'makers', 'vendors'].includes(params.get('tab')) ? params.get('tab') : 'models';
+  const tabs = `<div class="chips">${[['models', 'Models'], ['types', 'Types'], ['makers', 'Manufacturers'], ['vendors', 'Vendors']]
     .map(([k, t]) => `<a class="chip ${k === tab ? 'on' : ''}" href="#/models${k === 'models' ? '' : '?tab=' + k}">${t}</a>`).join('')}</div>`;
+  if (tab === 'types') return pageTypes(tabs);
   if (tab !== 'models') return pageNames(tab, tabs);
   const ms = await models(true);
   view.innerHTML = `
@@ -753,6 +755,53 @@ async function pageModels(params = new URLSearchParams()) {
   };
   if (ms.length) { $('#mq').oninput = filter; $('#mcat').onchange = filter; filter(); }
   $$('[data-edit]').forEach(b => b.onclick = () => modelModal(ms.find(m => m.id === +b.dataset.edit)));
+}
+
+// Equipment types: add, rename, reorder, and whether the type carries a LoRaWAN EUI
+async function pageTypes(tabs) {
+  const list = await api('/categories');
+  view.innerHTML = `
+    <div class="page-head"><div class="grow"><h1>Equipment catalog</h1>
+      <p class="sub">The types every model belongs to. They group the dashboard and device list, and set which fields Add device asks for.</p></div>
+      <div class="actions"><button id="addType">＋ Add type</button></div></div>
+    ${tabs}
+    <div class="tbl-wrap"><table><thead><tr><th>Type</th><th>EUI</th><th>Used by</th><th></th></tr></thead><tbody>
+      ${list.map((c, k) => `<tr><td><div class="t1">${esc(c.label)}</div></td>
+        <td>${c.eui ? '<span class="tag">Has EUI</span>' : '<span class="muted">—</span>'}</td>
+        <td>${c.models ? `<a href="#/models?q=${encodeURIComponent(c.label)}">${c.models} model${c.models === 1 ? '' : 's'}</a>` : '<span class="muted">No models</span>'}
+          ${c.devices ? `<span class="muted"> · </span><a href="#/devices?status=all&category=${c.key}">${c.devices} device${c.devices === 1 ? '' : 's'}</a>` : ''}</td>
+        <td class="nowrap" style="text-align:right">
+          <button class="link" data-move="up" data-k="${k}" title="Move up" ${k ? '' : 'disabled'}>↑</button>
+          <button class="link" data-move="down" data-k="${k}" title="Move down" ${k < list.length - 1 ? '' : 'disabled'}>↓</button>
+          <button class="link" data-edit="${k}">Edit</button></td></tr>`).join('')}
+    </tbody></table></div>`;
+  const refresh = async () => { META.categories = (await api('/meta')).categories; cache.models = null; pageTypes(tabs); };
+  $$('[data-move]').forEach(b => b.onclick = async () => {
+    try { await api(`/categories/${list[+b.dataset.k].key}/move`, { method: 'POST', body: { dir: b.dataset.move } }); refresh(); }
+    catch (err) { toast(err.message, true); }
+  });
+  const edit = c => modal(`<h2>${c ? 'Edit type' : 'New type'}</h2><form class="stack">
+      <div class="field"><label>Name</label><input type="text" name="label" required value="${esc(c?.label || '')}" placeholder="e.g. Weather station"></div>
+      <label class="check"><input type="checkbox" name="eui" ${c?.eui ? 'checked' : ''}> Has a LoRaWAN EUI
+        <span class="muted">(Add device asks for the EUI and uses it as the ID)</span></label>
+      <div class="modal-actions">${c && !c.models ? '<button type="button" class="sec" data-del style="margin-right:auto;color:var(--danger)">Delete</button>' : ''}
+        <button type="button" class="sec" data-x>Cancel</button><button>Save</button></div></form>`, el => {
+    el.querySelector('[data-x]').onclick = closeModal;
+    el.querySelector('[data-del]')?.addEventListener('click', async () => {
+      try { await api('/categories/' + c.key, { method: 'DELETE' }); closeModal(); toast('Deleted'); refresh(); }
+      catch (err) { toast(err.message, true); }
+    });
+    el.querySelector('form').onsubmit = async e => {
+      e.preventDefault();
+      const body = { label: e.target.label.value, eui: e.target.eui.checked };
+      try {
+        await api(c ? '/categories/' + c.key : '/categories', { method: c ? 'PUT' : 'POST', body });
+        closeModal(); toast('Saved'); refresh();
+      } catch (err) { toast(err.message, true); }
+    };
+  });
+  $('#addType').onclick = () => edit(null);
+  $$('[data-edit]').forEach(b => b.onclick = () => edit(list[+b.dataset.edit]));
 }
 
 // Manufacturer and vendor names: what's in use, and rename (renaming onto an existing name merges them)
@@ -794,7 +843,7 @@ async function pageNames(tab, tabs) {
   });
 }
 function modelModal(m) {
-  m ||= { category: 'sensor' };
+  m ||= { category: defaultType() };
   modal(`<h2>${m.id ? 'Edit model' : 'New model'}</h2><form class="stack">
     <div class="field"><label>Category</label><select name="category">${options(META.categories.map(c => ({ value: c.key, text: c.label })), m.category)}</select></div>
     <div class="field"><label>Manufacturer</label><input type="text" name="manufacturer" required value="${esc(m.manufacturer || '')}" placeholder="Search or add a manufacturer"></div>
