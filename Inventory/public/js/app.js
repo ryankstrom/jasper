@@ -854,8 +854,8 @@ async function pageTypes(tabs) {
   });
   const edit = c => modal(`<h2>${c ? 'Edit type' : 'New type'}</h2><form class="stack">
       <div class="field"><label>Name</label><input type="text" name="label" required value="${esc(c?.label || '')}" placeholder="e.g. Weather station"></div>
-      <label class="check"><input type="checkbox" name="eui" ${c?.eui ? 'checked' : ''}> Has a LoRaWAN EUI
-        <span class="muted">(Add device asks for the EUI and uses it as the ID)</span></label>
+      <label class="check top"><input type="checkbox" name="eui" ${c?.eui ? 'checked' : ''}>
+        <span>Has a LoRaWAN EUI<span class="hint">Add device asks for the EUI and uses it as the device ID.</span></span></label>
       <div class="modal-actions">${c && !c.models ? '<button type="button" class="sec" data-del style="margin-right:auto;color:var(--danger)">Delete</button>' : ''}
         <button type="button" class="sec" data-x>Cancel</button><button>Save</button></div></form>`, el => {
     el.querySelector('[data-x]').onclick = closeModal;
