@@ -670,13 +670,29 @@ async function pageModels() {
     <div class="page-head"><div class="grow"><h1>Equipment catalog</h1>
       <p class="sub">The makes and models you stock. Each device in inventory points at one of these.</p></div>
       <div class="actions"><button id="addModel">＋ Add model</button></div></div>
-    ${ms.length ? `<div class="tbl-wrap"><table><thead><tr><th>Model</th><th>Type</th><th>Devices</th><th></th></tr></thead><tbody>
-      ${ms.map(m => `<tr><td><div class="t1">${esc(m.manufacturer)} ${esc(m.model)}</div><div class="t2">${esc(m.description || '')}</div></td>
+    ${ms.length ? `<div class="filters"><input type="search" id="mq" placeholder="Search make, model or description…" autocomplete="off">
+      <select id="mcat">${options(META.categories.map(c => ({ value: c.key, text: c.label })), '', 'All types')}</select></div>
+      <div class="tbl-wrap"><table><thead><tr><th>Model</th><th>Type</th><th>Devices</th><th></th></tr></thead><tbody>
+      ${ms.map(m => `<tr data-row="${m.id}"><td><div class="t1">${esc(m.manufacturer)} ${esc(m.model)}</div><div class="t2">${esc(m.description || '')}</div></td>
         <td><span class="tag">${esc(catLabel(m.category))}</span></td>
         <td>${m.device_count ? `<a href="#/devices?model=${m.id}" data-model="${m.id}">${m.device_count}</a>` : '<span class="muted">0</span>'}</td>
         <td style="text-align:right"><button class="link" data-edit="${m.id}">Edit</button></td></tr>`).join('')}
+      <tr id="mnone" hidden><td colspan="4" class="muted">No models match.</td></tr>
       </tbody></table></div>` : `<div class="card empty">No models yet. Add the sensors, gateways and other equipment you buy.</div>`}`;
   $('#addModel').onclick = () => modelModal(null);
+  // filter rows in place; every word has to appear somewhere in the make, model, description or type
+  const filter = () => {
+    const words = $('#mq').value.toLowerCase().split(/\s+/).filter(Boolean), cat = $('#mcat').value;
+    let shown = 0;
+    for (const m of ms) {
+      const hay = `${m.manufacturer} ${m.model} ${m.description || ''} ${catLabel(m.category)}`.toLowerCase();
+      const ok = (!cat || m.category === cat) && words.every(w => hay.includes(w));
+      $(`[data-row="${m.id}"]`).hidden = !ok;
+      shown += ok;
+    }
+    $('#mnone').hidden = shown > 0;
+  };
+  if (ms.length) { $('#mq').oninput = filter; $('#mcat').onchange = filter; }
   $$('[data-edit]').forEach(b => b.onclick = () => modelModal(ms.find(m => m.id === +b.dataset.edit)));
 }
 function modelModal(m) {
