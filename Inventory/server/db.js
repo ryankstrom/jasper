@@ -17,12 +17,13 @@ export const STATUSES = [
   { key: 'lost',       label: 'Lost' },
 ];
 export const CATEGORIES = [
-  { key: 'sensor',   label: 'LoRaWAN Sensor' },
-  { key: 'gateway',  label: 'Gateway' },
-  { key: 'antenna',  label: 'Antenna' },
-  { key: 'power',    label: 'Power / Solar' },
-  { key: 'network',  label: 'Backhaul / Network' },
-  { key: 'other',    label: 'Other Equipment' },
+  // short: Add device type picker; eui: whether this kind of equipment carries a LoRaWAN EUI
+  { key: 'sensor',   label: 'LoRaWAN Sensor',     short: 'Sensor',  eui: true },
+  { key: 'gateway',  label: 'Gateway',            short: 'Gateway', eui: true },
+  { key: 'antenna',  label: 'Antenna',            short: 'Antenna' },
+  { key: 'power',    label: 'Power / Solar',      short: 'Power' },
+  { key: 'network',  label: 'Backhaul / Network', short: 'Network' },
+  { key: 'other',    label: 'Other Equipment',    short: 'Other' },
 ];
 export const LOCATION_KINDS = [
   { key: 'warehouse', label: 'Warehouse / Stock' },

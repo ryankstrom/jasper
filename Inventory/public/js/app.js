@@ -112,7 +112,10 @@ function locationOptions(locs, sel, blank = '— None —') {
   }).join('');
   return `<option value="">${esc(blank)}</option>${groups}<option value="__new">＋ New location…</option>`;
 }
-function modelOptions(ms, sel) {
+function modelOptions(ms, sel, cat) {
+  // with a category: just that type's models, no groups
+  if (cat) return `<option value="">— Select model —</option>${options(ms.filter(m => m.category === cat)
+    .map(m => ({ value: m.id, text: `${m.manufacturer} ${m.model}` })), sel)}<option value="__new">＋ New model…</option>`;
   const groups = META.categories.map(c => {
     const items = ms.filter(m => m.category === c.key);
     return items.length ? `<optgroup label="${esc(c.label)}">${options(items.map(m => ({ value: m.id, text: `${m.manufacturer} ${m.model}` })), sel)}</optgroup>` : '';
@@ -121,13 +124,13 @@ function modelOptions(ms, sel) {
 }
 
 // "＋ New …" entries in selects open a nested quick-create form, then select the result.
-function wireQuickCreate(select, kind, onCreated) {
+function wireQuickCreate(select, kind, onCreated, category) {
   let prev = select.value === '__new' ? '' : select.value;
   select.addEventListener('focus', () => { if (select.value !== '__new') prev = select.value; });
   select.addEventListener('change', async () => {
     if (select.value !== '__new') { prev = select.value; return; }
     select.value = prev;
-    const created = kind === 'location' ? await quickLocation() : await quickModel();
+    const created = kind === 'location' ? await quickLocation() : await quickModel(category?.());
     if (!created) return;
     await onCreated(created);
     select.value = created.id;
@@ -158,9 +161,9 @@ async function quickLocation() {
   try { const l = await api('/locations', { method: 'POST', body: v }); await locations(true); return l; }
   catch (e) { toast(e.message, true); return null; }
 }
-async function quickModel() {
+async function quickModel(category = 'sensor') {
   const v = await inlineDialog(`<h2>New catalog model</h2><form class="stack">
-    <div class="field"><label>Category</label><select name="category">${options(META.categories.map(c => ({ value: c.key, text: c.label })), 'sensor')}</select></div>
+    <div class="field"><label>Category</label><select name="category">${options(META.categories.map(c => ({ value: c.key, text: c.label })), category)}</select></div>
     <div class="field"><label>Manufacturer</label><input type="text" name="manufacturer" required placeholder="e.g. Milesight"></div>
     <div class="field"><label>Model</label><input type="text" name="model" required placeholder="e.g. EM300-TH"></div>
     <div class="modal-actions"><button type="button" class="sec" data-x>Cancel</button><button>Create</button></div></form>`);
@@ -482,7 +485,7 @@ async function pageDevice(params, id) {
 
 function deviceFields(d = {}, ms = [], { withStatus = false, locs = [] } = {}) {
   return `
-    <div class="field"><label>EUI <span class="muted">(DevEUI / Gateway EUI)</span></label>
+    <div class="field" data-eui><label>EUI <span class="muted">(DevEUI / Gateway EUI)</span></label>
       <div class="inline"><input type="text" class="mono" name="eui" value="${esc(d.eui || '')}" placeholder="16 hex digits" autocomplete="off" spellcheck="false">
       ${withStatus ? '<button type="button" class="sec" id="scanEui" title="Scan the device’s QR code">⌗</button>' : ''}</div>
       <span class="hint">${withStatus ? 'Becomes the device UID. Leave blank for equipment without an EUI and a JSP- ID will be generated.' : ''}</span></div>
@@ -492,7 +495,7 @@ function deviceFields(d = {}, ms = [], { withStatus = false, locs = [] } = {}) {
     ${withStatus ? `
     <div class="field"><label>Status</label><select name="status">${statusOptions(d.status || 'in_stock')}</select></div>
     <div class="field"><label>Location</label><select name="location_id">${locationOptions(locs, d.location_id)}</select></div>` : ''}
-    <div class="field"><label>JoinEUI / AppEUI</label><input type="text" class="mono" name="join_eui" value="${esc(d.join_eui || '')}" autocomplete="off" spellcheck="false"></div>
+    <div class="field" data-eui><label>JoinEUI / AppEUI</label><input type="text" class="mono" name="join_eui" value="${esc(d.join_eui || '')}" autocomplete="off" spellcheck="false"></div>
     <div class="field"><label>Firmware</label><input type="text" name="firmware" value="${esc(d.firmware || '')}"></div>
     <div class="field"><label>Purchase date</label><input type="date" name="purchase_date" value="${esc(d.purchase_date || '')}"></div>
     <div class="field"><label>Vendor</label><input type="text" name="vendor" value="${esc(d.vendor || '')}"></div>
@@ -532,11 +535,29 @@ async function pageNew(params) {
     <div class="crumb"><a href="#/devices">‹ Devices</a></div>
     <div class="page-head"><div class="grow"><h1>Add device</h1>
       <p class="sub">Use the device EUI as its unique ID whenever it has one. Equipment without an EUI (antennas, solar kits…) gets a generated <span class="mono">JSP-</span> ID and a printable QR label.</p></div></div>
-    <form id="newForm" class="card"><div class="form">${deviceFields(prefill, ms, { withStatus: true, locs })}</div>
+    <form id="newForm" class="card"><div class="form">
+      <div class="field wide"><label>Type</label><div class="chips" id="typePick" style="margin:0">
+        ${META.categories.map(c => `<button type="button" class="chip" data-cat="${c.key}">${esc(c.short)}</button>`).join('')}</div></div>
+      ${deviceFields(prefill, ms, { withStatus: true, locs })}</div>
       <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:16px;flex-wrap:wrap">
         <a class="btn sec" href="#/devices">Cancel</a><button type="submit">Add to inventory</button></div></form>`;
   const f = $('#newForm');
-  wireQuickCreate(f.model_id, 'model', async () => { f.model_id.innerHTML = modelOptions(await models()); });
+  // the type picker narrows the model list and hides the EUI fields for equipment that has none
+  let type;
+  const setType = (cat, list = ms) => {
+    type = cat;
+    $$('#typePick .chip').forEach(c => c.classList.toggle('on', c.dataset.cat === cat));
+    const mine = list.filter(m => m.category === cat);
+    f.model_id.innerHTML = modelOptions(list, mine.length === 1 ? mine[0].id : '', cat);
+    const eui = META.categories.find(c => c.key === cat)?.eui;
+    $$('#newForm [data-eui]').forEach(el => {
+      el.hidden = !eui;
+      el.querySelectorAll('input,button').forEach(i => { i.disabled = !eui; });
+    });
+  };
+  $$('#typePick .chip').forEach(c => c.onclick = () => setType(c.dataset.cat));
+  setType(META.categories.some(c => c.key === params.get('type')) ? params.get('type') : 'sensor');
+  wireQuickCreate(f.model_id, 'model', async created => setType(created.category, await models()), () => type);
   wireQuickCreate(f.location_id, 'location', async () => { f.location_id.innerHTML = locationOptions(await locations()); });
   $('#scanEui').onclick = () => scanOnce(parsed => {
     if (parsed.eui) f.eui.value = parsed.eui;
