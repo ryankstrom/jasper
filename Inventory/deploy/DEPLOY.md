@@ -94,7 +94,7 @@ Then, on the VM:
 
 ```sh
 sudo apt-get update && sudo apt-get install -y git
-sudo git clone https://github.com/ryankstrom/jasperpower.git /opt/jasperpower
+sudo git clone https://github.com/ryankstrom/jasper.git /opt/jasperpower
 sudo PUBLIC_URL=https://inventory.yourdomain.com \
      BACKUP_BUCKET=<bucket from step 2> \
      TUNNEL_TOKEN=<token from step 4> \
@@ -127,7 +127,7 @@ telling anyone the address**. Until then, anyone who finds it can edit the inven
    Set the organization name, a logo URL, header and message text, and background
    `#34464a` (Jasper slate). The logo must be publicly reachable, and everything on
    the app's hostname is behind Access, so point it at jsDelivr instead, e.g.
-   `https://cdn.jsdelivr.net/gh/ryankstrom/jasperpower@<commit>/Inventory/public/brand/jasper-logo-cyan.svg`.
+   `https://cdn.jsdelivr.net/gh/ryankstrom/jasper@<commit>/Inventory/public/brand/jasper-logo-cyan.svg`.
    With a custom background the login card is white, so use the slate (`-cyan`)
    logo, not the white one. The organization name is shown beside the logo and is
    required; to hide it, set it to a single zero-width space (U+200B). A blank or

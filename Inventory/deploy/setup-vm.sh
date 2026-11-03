@@ -8,7 +8,7 @@
 #        /opt/jasperpower/Inventory/deploy/setup-vm.sh
 set -euo pipefail
 
-REPO_URL="${REPO_URL:-https://github.com/ryankstrom/jasperpower.git}"
+REPO_URL="${REPO_URL:-https://github.com/ryankstrom/jasper.git}"
 BRANCH="${BRANCH:-main}"
 SRC=/opt/jasperpower
 APP="$SRC/Inventory"
