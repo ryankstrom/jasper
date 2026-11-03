@@ -1,0 +1,3 @@
+# Cloudflare Pages response headers. Browsers re-check files on each visit so updates show up straight away.
+/*
+  Cache-Control: no-cache
