@@ -166,6 +166,9 @@ input[type="range"] {
 input[type="file"] {
   font-size: 13px;
   flex: 1;
+  min-width: 0; /* let a long file name shrink instead of pushing Remove out of the panel */
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .checkbox-label {
