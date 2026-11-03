@@ -71,4 +71,6 @@ tx(db, () => {
     }
   }
 });
+// demo devices belong to the default owner, as new devices do
+db.exec('UPDATE devices SET owner_id = (SELECT id FROM owners WHERE is_default = 1) WHERE owner_id IS NULL');
 console.log(`Seeded demo data into ${DB_PATH}`);

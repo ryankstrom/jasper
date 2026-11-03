@@ -9,8 +9,10 @@ const esc = v => String(v ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': 
 const STATUS_COLOR = { in_stock: 'var(--accent)', deployed: 'var(--good)', in_transit: 'var(--blue)',
   repair: 'var(--warn)', retired: '#8d9a9b', lost: 'var(--danger)' };
 const STATUS_ICON = { in_stock: '⇩', deployed: '⇧', in_transit: '⇄', repair: '⚒', retired: '⊘', lost: '?' };
-let META = { statuses: [], categories: [], location_kinds: [] };
+let META = { statuses: [], categories: [], location_kinds: [], owners: [] };
 const defaultType = () => META.categories[0]?.key;
+const defaultOwner = () => (META.owners.find(o => o.is_default) || META.owners[0])?.id;
+const ownerOptions = sel => `${options(META.owners.map(o => ({ value: o.id, text: o.name })), sel)}<option value="__new">＋ New owner…</option>`;
 const label = (list, key) => META[list].find(x => x.key === key)?.label ?? key ?? '—';
 const statusLabel = k => label('statuses', k);
 const catLabel = k => label('categories', k);
@@ -248,7 +250,8 @@ function wireQuickCreate(select, kind, onCreated, category) {
     delete select.dataset.prev;
     const typed = select.dataset.query;
     delete select.dataset.query;
-    const created = kind === 'location' ? await quickLocation() : await quickModel(category?.(), typed);
+    const created = kind === 'location' ? await quickLocation() : kind === 'owner' ? await quickOwner(typed)
+      : await quickModel(category?.(), typed);
     if (!created) return;
     await onCreated(created);
     select.value = created.id;
@@ -278,6 +281,14 @@ async function quickLocation() {
     <div class="modal-actions"><button type="button" class="sec" data-x>Cancel</button><button>Create</button></div></form>`);
   if (!v) return null;
   try { const l = await api('/locations', { method: 'POST', body: v }); await locations(true); return l; }
+  catch (e) { toast(e.message, true); return null; }
+}
+async function quickOwner(name = '') {
+  const v = await inlineDialog(`<h2>New owner</h2><form class="stack">
+    <div class="field"><label>Name</label><input type="text" name="name" required value="${esc(name)}" placeholder="e.g. SLR US"></div>
+    <div class="modal-actions"><button type="button" class="sec" data-x>Cancel</button><button>Create</button></div></form>`);
+  if (!v) return null;
+  try { const o = await api('/owners', { method: 'POST', body: v }); META.owners = (await api('/meta')).owners; return o; }
   catch (e) { toast(e.message, true); return null; }
 }
 async function quickModel(category = defaultType(), model = '') {
@@ -476,6 +487,7 @@ async function pageDevices(params) {
       <input type="search" id="q" placeholder="Search UID, EUI, serial, name, model, PO…" value="${esc(params.get('q') || '')}">
       <select id="cat">${options(META.categories.map(c => ({ value: c.key, text: c.label })), params.get('category'), 'All types')}</select>
       <select id="loc">${options(locs.map(l => ({ value: l.id, text: l.name })), params.get('location_id'), 'All locations')}</select>
+      ${META.owners.length > 1 ? `<select id="own">${options(META.owners.map(o => ({ value: o.id, text: o.name })), params.get('owner_id'), 'All owners')}</select>` : ''}
     </div>
     <div class="tbl-wrap devices"><table><thead><tr><th>Device</th><th>UID</th><th>Type</th><th>Status</th><th>Location</th><th>Updated</th></tr></thead>
       <tbody id="rows"></tbody></table></div>
@@ -488,6 +500,9 @@ async function pageDevices(params) {
     if (status === 'all') qs.set('all', '1'); else if (status) qs.set('status', status);
     if ($('#cat').value) qs.set('category', $('#cat').value);
     if ($('#loc').value) qs.set('location_id', $('#loc').value);
+    // the owner picker only shows once there's more than one owner; a link can still filter by one
+    const own = $('#own') ? $('#own').value : params.get('owner_id');
+    if (own) qs.set('owner_id', own);
     if (modelId) qs.set('model_id', modelId);
     const list = await api('/devices?' + qs);
     $('#count').textContent = `${list.length} device${list.length === 1 ? '' : 's'}${status && status !== 'all' ? ' · ' + statusLabel(status) : status === 'all' ? ' · all statuses' : ' · active (excludes retired & lost)'}`;
@@ -505,6 +520,7 @@ async function pageDevices(params) {
   let t;
   $('#q').addEventListener('input', () => { clearTimeout(t); t = setTimeout(load, 200); });
   $('#cat').onchange = load; $('#loc').onchange = load;
+  if ($('#own')) $('#own').onchange = load;
   $$('#chips .chip').forEach(c => c.onclick = () => {
     status = c.dataset.s;
     $$('#chips .chip').forEach(x => x.classList.toggle('on', x === c));
@@ -555,6 +571,7 @@ async function pageDevice(params, id) {
       <div class="stack">
         <div class="card"><div class="card-title">Details<span class="r"><button class="link" id="editBtn">Edit</button></span></div>
           <dl class="kv">
+            <dt>Owner</dt><dd>${esc(d.owner_name || '—')}</dd>
             <dt>EUI</dt><dd class="mono">${fmtEui(d.eui)}</dd>
             ${d.old_uid ? `<dt>Earlier ID</dt><dd class="mono" title="Labels printed with this ID still scan">${esc(d.old_uid)}</dd>` : ''}
             ${d.join_eui ? `<dt>JoinEUI</dt><dd class="mono">${fmtEui(d.join_eui)}</dd>` : ''}
@@ -613,6 +630,7 @@ function deviceFields(d = {}, ms = [], { withStatus = false, locs = [] } = {}) {
       <span class="hint">${withStatus ? 'Becomes the device UID. Leave blank for equipment without an EUI and a JSP- ID will be generated.'
         : d.uid_source === 'generated' ? `Adding the EUI makes it the device ID. The printed ${esc(d.uid)} label keeps working.` : ''}</span></div>
     <div class="field"><label>Model</label><select name="model_id">${modelOptions(ms, d.model_id)}</select></div>
+    <div class="field"><label>Owner</label><select name="owner_id">${ownerOptions(d.owner_id ?? defaultOwner())}</select></div>
     <div class="field"><label>Name <span class="muted">(optional)</span></label><input type="text" name="name" value="${esc(d.name || '')}" placeholder="e.g. Tank 3 level"></div>
     <div class="field"><label>Serial #</label><input type="text" name="serial_number" value="${esc(d.serial_number || '')}"></div>
     ${withStatus ? `
@@ -635,6 +653,9 @@ async function editDeviceModal(d, onDone) {
     <div class="modal-actions"><button type="button" class="sec" data-x>Cancel</button><button>Save</button></div></form>`, m => {
     m.querySelector('[data-x]').onclick = closeModal;
     combo(m.querySelector('[name=vendor]'), vendors, 'vendor');
+    wireQuickCreate(m.querySelector('[name=owner_id]'), 'owner', async () => {
+      m.querySelector('[name=owner_id]').innerHTML = ownerOptions();
+    });
     searchSelect(m.querySelector('[name=model_id]'), 'Search models…', 'New model');
     wireQuickCreate(m.querySelector('[name=model_id]'), 'model', async () => {
       m.querySelector('[name=model_id]').innerHTML = modelOptions(await models());
@@ -668,6 +689,7 @@ async function pageNew(params) {
         <a class="btn sec" href="#/devices">Cancel</a><button type="submit">Add to inventory</button></div></form>`;
   const f = $('#newForm');
   combo(f.vendor, vendors, 'vendor');
+  wireQuickCreate(f.owner_id, 'owner', async () => { f.owner_id.innerHTML = ownerOptions(); });
   // the type picker narrows the model list and hides the EUI fields for equipment that has none
   let type;
   const setType = (cat, list = ms) => {
@@ -792,10 +814,11 @@ async function pageLocation(params, id) {
 
 // --- catalog ---
 async function pageModels(params = new URLSearchParams()) {
-  const tab = ['types', 'makers', 'vendors'].includes(params.get('tab')) ? params.get('tab') : 'models';
-  const tabs = `<div class="chips">${[['models', 'Models'], ['types', 'Types'], ['makers', 'Manufacturers'], ['vendors', 'Vendors']]
+  const tab = ['types', 'owners', 'makers', 'vendors'].includes(params.get('tab')) ? params.get('tab') : 'models';
+  const tabs = `<div class="chips">${[['models', 'Models'], ['types', 'Types'], ['owners', 'Owners'], ['makers', 'Manufacturers'], ['vendors', 'Vendors']]
     .map(([k, t]) => `<a class="chip ${k === tab ? 'on' : ''}" href="#/models${k === 'models' ? '' : '?tab=' + k}">${t}</a>`).join('')}</div>`;
   if (tab === 'types') return pageTypes(tabs);
+  if (tab === 'owners') return pageOwners(tabs);
   if (tab !== 'models') return pageNames(tab, tabs);
   const ms = await models(true);
   view.innerHTML = `
@@ -873,6 +896,47 @@ async function pageTypes(tabs) {
     };
   });
   $('#addType').onclick = () => edit(null);
+  $$('[data-edit]').forEach(b => b.onclick = () => edit(list[+b.dataset.edit]));
+}
+
+// Owners: who each device belongs to. One is the default for new devices.
+async function pageOwners(tabs) {
+  const list = await api('/owners');
+  view.innerHTML = `
+    <div class="page-head"><div class="grow"><h1>Equipment catalog</h1>
+      <p class="sub">Who each device belongs to. New devices get the default owner unless you pick another.</p></div>
+      <div class="actions"><button id="addOwner">＋ Add owner</button></div></div>
+    ${tabs}
+    <div class="tbl-wrap"><table><thead><tr><th>Owner</th><th>Devices</th><th></th></tr></thead><tbody>
+      ${list.map((o, k) => `<tr><td><div class="t1">${esc(o.name)} ${o.is_default ? '<span class="tag">Default</span>' : ''}</div></td>
+        <td>${o.devices ? `<a href="#/devices?status=all&owner_id=${o.id}">${o.devices} device${o.devices === 1 ? '' : 's'}</a>` : '<span class="muted">No devices</span>'}</td>
+        <td class="nowrap" style="text-align:right">
+          ${o.is_default ? '' : `<button class="link" data-default="${k}" style="margin-right:12px">Make default</button>`}
+          <button class="link" data-edit="${k}">Edit</button></td></tr>`).join('')}
+    </tbody></table></div>`;
+  const refresh = async () => { META.owners = (await api('/meta')).owners; pageOwners(tabs); };
+  $$('[data-default]').forEach(b => b.onclick = async () => {
+    try { await api(`/owners/${list[+b.dataset.default].id}/default`, { method: 'POST' }); toast('Default owner changed'); refresh(); }
+    catch (err) { toast(err.message, true); }
+  });
+  const edit = o => modal(`<h2>${o ? 'Edit owner' : 'New owner'}</h2><form class="stack">
+      <div class="field"><label>Name</label><input type="text" name="name" required value="${esc(o?.name || '')}" placeholder="e.g. SLR US"></div>
+      <div class="modal-actions">${o && !o.devices && !o.is_default ? '<button type="button" class="sec" data-del style="margin-right:auto;color:var(--danger)">Delete</button>' : ''}
+        <button type="button" class="sec" data-x>Cancel</button><button>Save</button></div></form>`, el => {
+    el.querySelector('[data-x]').onclick = closeModal;
+    el.querySelector('[data-del]')?.addEventListener('click', async () => {
+      try { await api('/owners/' + o.id, { method: 'DELETE' }); closeModal(); toast('Deleted'); refresh(); }
+      catch (err) { toast(err.message, true); }
+    });
+    el.querySelector('form').onsubmit = async e => {
+      e.preventDefault();
+      try {
+        await api(o ? '/owners/' + o.id : '/owners', { method: o ? 'PUT' : 'POST', body: { name: e.target.name.value } });
+        closeModal(); toast('Saved'); refresh();
+      } catch (err) { toast(err.message, true); }
+    };
+  });
+  $('#addOwner').onclick = () => edit(null);
   $$('[data-edit]').forEach(b => b.onclick = () => edit(list[+b.dataset.edit]));
 }
 

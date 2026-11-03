@@ -7,7 +7,7 @@ const STATUS_KEYS = new Set(STATUSES.map(s => s.key));
 const KIND_KEYS = new Set(LOCATION_KINDS.map(k => k.key));
 
 const DEVICE_FIELDS = ['eui', 'join_eui', 'serial_number', 'name', 'model_id', 'location_id', 'lat', 'lon',
-  'purchase_date', 'vendor', 'po_number', 'cost', 'warranty_expires', 'firmware', 'notes'];
+  'purchase_date', 'vendor', 'po_number', 'cost', 'warranty_expires', 'firmware', 'notes', 'owner_id'];
 
 export class HttpError extends Error {
   constructor(status, message, extra) { super(message); this.status = status; this.extra = extra; }
@@ -41,7 +41,7 @@ function cleanDevice(body) {
       const e = normalizeEui(v);
       if (!e) throw new HttpError(400, `${f === 'eui' ? 'EUI' : 'JoinEUI'} must be 16 hex digits`);
       d[f] = e;
-    } else if (f === 'model_id' || f === 'location_id') d[f] = int(v);
+    } else if (f === 'model_id' || f === 'location_id' || f === 'owner_id') d[f] = int(v);
     else if (f === 'lat' || f === 'lon' || f === 'cost') d[f] = num(v);
     else d[f] = str(v);
   }
@@ -50,10 +50,11 @@ function cleanDevice(body) {
 
 const DEVICE_SELECT = `
   SELECT d.*, m.manufacturer, m.model AS model_name, m.category,
-         l.name AS location_name, l.kind AS location_kind
+         l.name AS location_name, l.kind AS location_kind, o.name AS owner_name
     FROM devices d
     LEFT JOIN models m    ON m.id = d.model_id
-    LEFT JOIN locations l ON l.id = d.location_id`;
+    LEFT JOIN locations l ON l.id = d.location_id
+    LEFT JOIN owners o    ON o.id = d.owner_id`;
 
 const EVENT_SELECT = `
   SELECT e.*, fl.name AS from_location_name, tl.name AS to_location_name,
@@ -76,6 +77,13 @@ export function createApi(db) {
   };
   const checkLocation = id => {
     if (id != null && !q('SELECT 1 FROM locations WHERE id = ?').get(id)) throw new HttpError(400, 'Unknown location');
+  };
+  const defaultOwner = () => q('SELECT id FROM owners ORDER BY is_default DESC, name LIMIT 1').get()?.id ?? null;
+  // every device has an owner; a missing one falls back to the default owner
+  const checkOwner = d => {
+    if (!('owner_id' in d)) return;
+    d.owner_id ??= defaultOwner();
+    if (d.owner_id != null && !q('SELECT 1 FROM owners WHERE id = ?').get(d.owner_id)) throw new HttpError(400, 'Unknown owner');
   };
   const checkModel = id => {
     if (id != null && !q('SELECT 1 FROM models WHERE id = ?').get(id)) throw new HttpError(400, 'Unknown model');
@@ -101,7 +109,9 @@ export function createApi(db) {
   });
   const categories = () => q('SELECT key, label, eui FROM categories ORDER BY sort, label').all()
     .map(c => ({ ...c, eui: !!c.eui }));
-  r.get('/meta', (req, res) => res.json({ statuses: STATUSES, categories: categories(), location_kinds: LOCATION_KINDS }));
+  const owners = () => q('SELECT id, name, is_default FROM owners ORDER BY name').all().map(o => ({ ...o, is_default: !!o.is_default }));
+  r.get('/meta', (req, res) => res.json({ statuses: STATUSES, categories: categories(), location_kinds: LOCATION_KINDS,
+    owners: owners() }));
 
   r.get('/stats', (req, res) => {
     const byStatus = q('SELECT status, COUNT(*) n FROM devices GROUP BY status').all();
@@ -156,6 +166,42 @@ export function createApi(db) {
     if (q('SELECT 1 FROM devices WHERE model_id = ?').get(int(req.params.id)))
       throw new HttpError(409, 'Model is used by devices; reassign them first');
     q('DELETE FROM models WHERE id = ?').run(int(req.params.id));
+    res.status(204).end();
+  });
+
+  // ---- owners ----
+  r.get('/owners', (req, res) => res.json(q(`SELECT o.id, o.name, o.is_default,
+      (SELECT COUNT(*) FROM devices d WHERE d.owner_id = o.id) devices
+    FROM owners o ORDER BY o.name`).all().map(o => ({ ...o, is_default: !!o.is_default }))));
+  const ownerName = (b, id) => {
+    const name = str(b.name);
+    if (!name) throw new HttpError(400, 'Name is required');
+    const same = q('SELECT id FROM owners WHERE name = ? COLLATE NOCASE').get(name);
+    if (same && same.id !== id) throw new HttpError(409, `There’s already an owner called “${name}”`);
+    return name;
+  };
+  r.post('/owners', (req, res) => {
+    const { lastInsertRowid } = q('INSERT INTO owners (name) VALUES (?)').run(ownerName(req.body));
+    res.status(201).json(q('SELECT * FROM owners WHERE id = ?').get(lastInsertRowid));
+  });
+  r.put('/owners/:id', (req, res) => {
+    const id = int(req.params.id);
+    const { changes } = q('UPDATE owners SET name = ? WHERE id = ?').run(ownerName(req.body, id), id);
+    if (!changes) throw new HttpError(404, 'Owner not found');
+    res.json(q('SELECT * FROM owners WHERE id = ?').get(id));
+  });
+  r.post('/owners/:id/default', (req, res) => {
+    const id = int(req.params.id);
+    if (!q('SELECT 1 FROM owners WHERE id = ?').get(id)) throw new HttpError(404, 'Owner not found');
+    tx(db, () => q('UPDATE owners SET is_default = (id = ?)').run(id));
+    res.json({ ok: true });
+  });
+  r.delete('/owners/:id', (req, res) => {
+    const o = q('SELECT * FROM owners WHERE id = ?').get(int(req.params.id));
+    if (!o) throw new HttpError(404, 'Owner not found');
+    if (o.is_default) throw new HttpError(409, 'Make another owner the default first');
+    if (q('SELECT 1 FROM devices WHERE owner_id = ?').get(o.id)) throw new HttpError(409, 'Devices still belong to this owner');
+    q('DELETE FROM owners WHERE id = ?').run(o.id);
     res.status(204).end();
   });
 
@@ -282,7 +328,7 @@ export function createApi(db) {
     const where = [], p = {};
     if (req.query.q) {
       where.push(`(d.uid LIKE :q OR d.old_uid LIKE :q OR d.eui LIKE :hex OR d.serial_number LIKE :q OR d.name LIKE :q
-        OR m.model LIKE :q OR m.manufacturer LIKE :q OR l.name LIKE :q OR d.po_number LIKE :q OR d.vendor LIKE :q)`);
+        OR m.model LIKE :q OR m.manufacturer LIKE :q OR l.name LIKE :q OR d.po_number LIKE :q OR d.vendor LIKE :q OR o.name LIKE :q)`);
       const text = String(req.query.q).trim();
       p.q = `%${text}%`;
       p.hex = `%${text.replace(/[\s:\-]/g, '')}%`; // EUIs are often written AA:BB:.. or AA-BB-..
@@ -292,6 +338,7 @@ export function createApi(db) {
     if (req.query.category) { where.push('m.category = :category'); p.category = String(req.query.category); }
     if (req.query.location_id) { where.push('d.location_id = :loc'); p.loc = int(req.query.location_id); }
     if (req.query.model_id) { where.push('d.model_id = :model'); p.model = int(req.query.model_id); }
+    if (req.query.owner_id) { where.push('d.owner_id = :owner'); p.owner = int(req.query.owner_id); }
     const sql = `${DEVICE_SELECT} ${where.length ? 'WHERE ' + where.join(' AND ') : ''}
       ORDER BY d.updated_at DESC LIMIT 1000`;
     res.json(q(sql).all(p));
@@ -300,7 +347,7 @@ export function createApi(db) {
   r.get('/devices.csv', (req, res) => {
     const rows = q(`${DEVICE_SELECT} ORDER BY d.uid`).all();
     const cols = ['uid', 'eui', 'join_eui', 'serial_number', 'name', 'category', 'manufacturer', 'model_name',
-      'status', 'location_name', 'lat', 'lon', 'purchase_date', 'vendor', 'po_number', 'cost',
+      'owner_name', 'status', 'location_name', 'lat', 'lon', 'purchase_date', 'vendor', 'po_number', 'cost',
       'warranty_expires', 'firmware', 'notes', 'created_at', 'updated_at'];
     const esc = v => (v == null ? '' : /[",\n]/.test(String(v)) ? `"${String(v).replace(/"/g, '""')}"` : String(v));
     const csv = [cols.join(','), ...rows.map(row => cols.map(c => esc(row[c])).join(','))].join('\n');
@@ -319,6 +366,8 @@ export function createApi(db) {
   r.post('/devices', (req, res) => {
     const d = cleanDevice(req.body);
     if (d.vendor) d.vendor = canonVendor(d.vendor);
+    d.owner_id ??= defaultOwner();
+    checkOwner(d);
     const status = str(req.body.status) || 'in_stock';
     if (!STATUS_KEYS.has(status)) throw new HttpError(400, 'Unknown status');
     checkLocation(d.location_id);
@@ -355,6 +404,7 @@ export function createApi(db) {
     if (d.vendor) d.vendor = canonVendor(d.vendor);
     delete d.location_id;
     checkModel(d.model_id);
+    checkOwner(d);
     const changes = {};
     for (const [k, v] of Object.entries(d)) if ((cur[k] ?? null) !== v) changes[k] = { from: cur[k] ?? null, to: v };
     if (!Object.keys(changes).length) return res.json(cur);

@@ -115,6 +115,17 @@ const MIGRATIONS = [
    );
    INSERT INTO categories (key, label, eui, sort) VALUES
    ${DEFAULT_CATEGORIES.map((c, k) => `(${sqlStr(c.key)}, ${sqlStr(c.label)}, ${c.eui}, ${k})`).join(',\n   ')};`,
+  // Who owns each device. Everything recorded before owners existed belonged to SLR Canada.
+  `CREATE TABLE owners (
+     id         INTEGER PRIMARY KEY,
+     name       TEXT NOT NULL UNIQUE COLLATE NOCASE,
+     is_default INTEGER NOT NULL DEFAULT 0,             -- new devices get this owner
+     created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+   );
+   INSERT INTO owners (name, is_default) VALUES ('SLR Canada', 1);
+   ALTER TABLE devices ADD COLUMN owner_id INTEGER REFERENCES owners(id);
+   UPDATE devices SET owner_id = (SELECT id FROM owners WHERE name = 'SLR Canada');
+   CREATE INDEX devices_owner ON devices(owner_id);`,
 ];
 
 export function openDb(path = DB_PATH) {
