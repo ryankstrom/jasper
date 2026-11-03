@@ -23,6 +23,7 @@ a{color:var(--accent-d)}
 #brandbar .title{font-family:var(--serif);font-size:26px;font-weight:500;letter-spacing:.2px;color:#eef3f1;
   white-space:nowrap}
 #brandbar .title b{font-weight:600}
+#brandbar a.title{text-decoration:none}
 #brandbar .spacer{flex:1}
 .hdr-actions{display:flex;gap:6px;flex:none}
 .hdr-btn{flex:none;width:auto;background:rgba(255,255,255,.12);border:1px solid rgba(255,255,255,.3);

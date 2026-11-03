@@ -42,6 +42,8 @@
   #brandbar .divider{width:1px;height:40px;background:rgba(255,255,255,.25)}
   #brandbar .title{font-family:var(--serif);font-size:26px;font-weight:500;letter-spacing:.2px;color:#eef3f1}
   #brandbar .title b{font-weight:600}
+  #brandbar a.home{display:block}
+  #brandbar a.title{text-decoration:none}
 
   main{flex:1;width:100%;max-width:1040px;margin:0 auto;padding:44px 22px 56px}
   h1{font-family:var(--serif);font-size:34px;font-weight:600;margin:0 0 8px;color:var(--slate);letter-spacing:.2px}
@@ -83,9 +85,9 @@
 </head>
 <body>
 <header id="brandbar">
-  <img class="logo" src="brand/jasper-logo-white.svg" alt="Jasper" />
+  <a href="https://jasper.tools" class="home" title="All Jasper tools"><img class="logo" src="brand/jasper-logo-white.svg" alt="Jasper" /></a>
   <div class="divider"></div>
-  <div class="title"><b>Tools</b></div>
+  <a class="title" href="/"><b>Tools</b></a>
 </header>
 
 <main>

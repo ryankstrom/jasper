@@ -49,6 +49,7 @@ body {
 #brandbar .divider { width: 1px; height: 40px; background: rgba(255, 255, 255, .25); }
 #brandbar .title { font-family: var(--serif); font-size: 26px; font-weight: 500; letter-spacing: .2px; color: #eef3f1; }
 #brandbar .title b { font-weight: 600; }
+#brandbar a.title { text-decoration: none; }
 
 .app {
   flex: 1;
