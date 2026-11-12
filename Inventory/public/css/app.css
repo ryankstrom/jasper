@@ -285,7 +285,7 @@ dl.kv dd{margin:0;min-width:0;overflow-wrap:anywhere}
 }
 @media (max-width:720px){
   :root{--hdr:56px;--navh:64px}
-  #brandbar{gap:10px;padding:0 12px;padding-top:env(safe-area-inset-top);height:calc(var(--hdr) + env(safe-area-inset-top))}
+  #brandbar{gap:12px;padding:0 12px;padding-top:env(safe-area-inset-top);height:calc(var(--hdr) + env(safe-area-inset-top))}
   #brandbar img.logo{height:30px}
   #brandbar .divider{height:26px}
   #brandbar .title{font-size:18px}
@@ -329,7 +329,9 @@ dl.kv dd{margin:0;min-width:0;overflow-wrap:anywhere}
   .scanner{aspect-ratio:1/1;max-height:46vh}
   .scanner .frame{inset:14% 14%}
 }
-@media (max-width:380px){
+/* the divider only goes on the very narrowest phones, where the name button would otherwise crowd the title */
+@media (max-width:340px){
+  #brandbar{gap:9px}
   #brandbar .divider{display:none}
 }
 @keyframes sheetUp{from{transform:translateY(40px);opacity:0}to{transform:none;opacity:1}}
