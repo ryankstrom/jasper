@@ -94,14 +94,26 @@ footer a:hover { text-decoration: underline; }
 
 @media (max-width: 760px) {
   .layout {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr);
   }
+  /* phones: the preview leads and stays in view while you scroll the settings */
+  .preview {
+    order: -1;
+    top: 0;
+    z-index: 5;
+    margin: 0 -16px;
+    padding: 10px 16px;
+    background: var(--bg);
+  }
+  .canvas-wrap { padding: 10px; }
+  .preview #qrCanvas { width: min(240px, 62vw); }
 }
 
 .controls {
   background: var(--panel);
   border: 1px solid var(--border);
   border-radius: var(--radius);
+  min-width: 0;
   padding: 22px;
   display: flex;
   flex-direction: column;
@@ -121,6 +133,7 @@ footer a:hover { text-decoration: underline; }
 
 .field-half {
   flex: 1;
+  min-width: 0;
   display: flex;
   flex-direction: column;
   gap: 6px;
@@ -271,6 +284,7 @@ select:focus {
 #qrCanvas {
   max-width: 100%;
   width: 420px;
-  height: 420px;
+  height: auto;          /* stays square at any width */
+  aspect-ratio: 1;
   display: block;
 }

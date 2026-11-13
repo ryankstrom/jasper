@@ -124,7 +124,8 @@
     }
   }
 
-  function drawFinderPattern(c, shape, originX, originY, cell, fgColor) {
+  // bgColor is the light ring's colour; null (transparent background) cuts the ring out instead
+  function drawFinderPattern(c, shape, originX, originY, cell, fgColor, bgColor) {
     const outer = cell * 7;
     const innerGap = cell * 5;
     const core = cell * 3;
@@ -132,12 +133,18 @@
     c.fillStyle = fgColor;
     finderShapeFill(c, shape, originX, originY, outer);
 
-    // Punch the light ring out (back to transparent/base background).
-    c.save();
-    c.globalCompositeOperation = 'destination-out';
-    c.fillStyle = 'rgba(0,0,0,1)';
-    finderShapeFill(c, shape, originX + cell, originY + cell, innerGap);
-    c.restore();
+    if (bgColor) {
+      // Paint the light ring in the background colour (cutting it out would leave a see-through ring).
+      c.fillStyle = bgColor;
+      finderShapeFill(c, shape, originX + cell, originY + cell, innerGap);
+    } else {
+      // Transparent background: punch the ring out so it stays see-through.
+      c.save();
+      c.globalCompositeOperation = 'destination-out';
+      c.fillStyle = 'rgba(0,0,0,1)';
+      finderShapeFill(c, shape, originX + cell, originY + cell, innerGap);
+      c.restore();
+    }
 
     c.fillStyle = fgColor;
     finderShapeFill(c, shape, originX + cell * 2, originY + cell * 2, core);
@@ -215,7 +222,7 @@
       [margin + moduleCount - 7, margin],
     ];
     corners.forEach(([r, c]) => {
-      drawFinderPattern(ctx, shape, c * cell, r * cell, cell, fgColor);
+      drawFinderPattern(ctx, shape, c * cell, r * cell, cell, fgColor, transparent ? null : bgColor);
     });
 
     if (logoImage) {
@@ -232,8 +239,9 @@
         ctx.fill();
       }
 
-      const iw = logoImage.width;
-      const ih = logoImage.height;
+      // SVGs without a width/height report 0 in some browsers (Safari); treat those as square
+      const iw = logoImage.naturalWidth || logoImage.width || 1;
+      const ih = logoImage.naturalHeight || logoImage.height || iw;
       const scale = Math.min(logoSize / iw, logoSize / ih);
       const dw = iw * scale;
       const dh = ih * scale;
